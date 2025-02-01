@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>System Metrics Dashboard</title>
+    <title>System Metrics & Betting Odds Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -28,40 +29,21 @@
             margin-bottom: 10px;
             color: #333;
         }
-        .progress-bar {
-            width: 100%;
-            height: 20px;
-            background-color: #eee;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-        .progress-fill {
-            height: 100%;
-            background-color: #4CAF50;
-            transition: width 0.5s ease-in-out;
-        }
         .timestamp {
             color: #666;
             font-size: 0.9em;
             text-align: right;
             margin-top: 20px;
         }
-        .error {
-            color: #dc3545;
-            font-weight: bold;
-        }
     </style>
 </head>
 <body>
     <div class="dashboard">
-        <h1>System Metrics Dashboard</h1>
+        <h1>System Metrics & Betting Odds Dashboard</h1>
         
         <div class="metric-card">
             <div class="metric-title">RAM Usage</div>
-            <div class="progress-bar">
-                <div id="ram-progress" class="progress-fill" style="width: 0%"></div>
-            </div>
-            <div id="ram-details"></div>
+            <canvas id="ramChart"></canvas>
         </div>
 
         <div class="metric-card">
@@ -69,51 +51,76 @@
             <div id="threads-details"></div>
         </div>
 
+        <div class="metric-card">
+            <div class="metric-title">Betting Odds</div>
+            <canvas id="oddsChart"></canvas>
+            <div id="odds-details"></div>
+        </div>
+
         <div class="timestamp" id="last-update"></div>
     </div>
 
     <script>
+        const ramCtx = document.getElementById('ramChart').getContext('2d');
+        const oddsCtx = document.getElementById('oddsChart').getContext('2d');
+
+        const ramChart = new Chart(ramCtx, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'RAM Usage (%)', data: [], borderColor: 'rgb(75, 192, 192)', tension: 0.1 }] },
+            options: { responsive: true, scales: { x: { title: { display: true, text: 'Time' } }, y: { title: { display: true, text: 'Usage (%)' }, min: 0, max: 100 } } }
+        });
+
+        const oddsChart = new Chart(oddsCtx, {
+            type: 'line',
+            data: { labels: [], datasets: [] },
+            options: { responsive: true, scales: { x: { title: { display: true, text: 'Time' } }, y: { title: { display: true, text: 'Odds' } } } }
+        });
+
         function updateMetrics() {
             fetch('/metrics')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
+                .then(response => response.json())
                 .then(data => {
-                    if (data.error) {
-                        console.error('Server error:', data.error);
-                        return;
-                    }
-                    // Update RAM information
-                    const ramProgress = document.getElementById('ram-progress');
-                    const ramDetails = document.getElementById('ram-details');
-                    ramProgress.style.width = data.ram.usage_percent + '%';
-                    ramDetails.innerHTML = `
-                        <p>Usage: ${data.ram.usage_percent}%</p>
-                        <p>Used: ${data.ram.used_gb} GB</p>
-                        <p>Available: ${data.ram.available_gb} GB</p>
-                        <p>Total: ${data.ram.total_gb} GB</p>
-                    `;
-
-                    // Update running threads information
-                    const threadsDetails = document.getElementById('threads-details');
-                    threadsDetails.innerHTML = `<p>Running Threads: ${data.threads}</p>`;
-
-                    // Update timestamp
-                    const lastUpdate = document.getElementById('last-update');
-                    lastUpdate.textContent = `Last Updated: ${new Date().toLocaleString()}`;
-                })
-                .catch(error => {
-                    console.error('Error fetching metrics:', error);
-                    document.getElementById('ram-details').innerHTML = '<p class="error">Error loading metrics</p>';
+                    if (data.error) return;
+                    const currentTime = new Date().toLocaleTimeString();
+                    ramChart.data.labels.push(currentTime);
+                    ramChart.data.datasets[0].data.push(data.ram.usage_percent);
+                    if (ramChart.data.labels.length > 20) { ramChart.data.labels.shift(); ramChart.data.datasets[0].data.shift(); }
+                    ramChart.update();
+                    document.getElementById('threads-details').innerHTML = `<p>Running Threads: ${data.threads}</p>`;
+                    document.getElementById('last-update').textContent = `Last Updated: ${new Date().toLocaleString()}`;
                 });
         }
 
-        // Update metrics immediately and then every 5 seconds
+        function updateOdds() {
+            fetch('/odds')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) return;
+                    const currentTime = new Date().toLocaleTimeString();
+                    let html = '<ul>';
+                    let newDatasets = [];
+                    data.forEach(odds => {
+                        html += `<li>${odds.event}: ${odds.team} @ ${odds.odds}</li>`;
+                        let dataset = oddsChart.data.datasets.find(ds => ds.label === odds.team);
+                        if (!dataset) {
+                            dataset = { label: odds.team, data: [], borderColor: '#' + Math.floor(Math.random()*16777215).toString(16), tension: 0.1 };
+                            oddsChart.data.datasets.push(dataset);
+                        }
+                        dataset.data.push(odds.odds);
+                        if (dataset.data.length > 20) dataset.data.shift();
+                    });
+                    html += '</ul>';
+                    document.getElementById('odds-details').innerHTML = html;
+                    oddsChart.data.labels.push(currentTime);
+                    if (oddsChart.data.labels.length > 20) oddsChart.data.labels.shift();
+                    oddsChart.update();
+                });
+        }
+
         updateMetrics();
+        updateOdds();
         setInterval(updateMetrics, 5000);
+        setInterval(updateOdds, 60000);
     </script>
 </body>
 </html>
