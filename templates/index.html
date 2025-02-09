@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>System Metrics & Betting Odds Dashboard</title>
+    <title>System Metrics & UEFA Club Rankings Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
@@ -39,7 +39,7 @@
 </head>
 <body>
     <div class="dashboard">
-        <h1>System Metrics & Betting Odds Dashboard</h1>
+        <h1>System Metrics & UEFA Club Rankings Dashboard</h1>
         
         <div class="metric-card">
             <div class="metric-title">RAM Usage</div>
@@ -52,9 +52,13 @@
         </div>
 
         <div class="metric-card">
-            <div class="metric-title">Betting Odds</div>
-            <canvas id="oddsChart"></canvas>
-            <div id="odds-details"></div>
+            <div class="metric-title">Top 6 UEFA Club Rankings</div>
+            <canvas id="uefaRankingsChart"></canvas>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-title">UEFA Club Rankings History</div>
+            <div id="uefa-rankings-history"></div>
         </div>
 
         <div class="timestamp" id="last-update"></div>
@@ -62,7 +66,7 @@
 
     <script>
         const ramCtx = document.getElementById('ramChart').getContext('2d');
-        const oddsCtx = document.getElementById('oddsChart').getContext('2d');
+        const uefaRankingsCtx = document.getElementById('uefaRankingsChart').getContext('2d');
 
         const ramChart = new Chart(ramCtx, {
             type: 'line',
@@ -70,10 +74,25 @@
             options: { responsive: true, scales: { x: { title: { display: true, text: 'Time' } }, y: { title: { display: true, text: 'Usage (%)' }, min: 0, max: 100 } } }
         });
 
-        const oddsChart = new Chart(oddsCtx, {
-            type: 'line',
-            data: { labels: [], datasets: [] },
-            options: { responsive: true, scales: { x: { title: { display: true, text: 'Time' } }, y: { title: { display: true, text: 'Odds' } } } }
+        const uefaRankingsChart = new Chart(uefaRankingsCtx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Points',
+                    data: [],
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { title: { display: true, text: 'Team' } },
+                    y: { title: { display: true, text: 'Points' }, beginAtZero: true }
+                }
+            }
         });
 
         function updateMetrics() {
@@ -91,36 +110,39 @@
                 });
         }
 
-        function updateOdds() {
-            fetch('/odds')
+        function updateUefaRankings() {
+            fetch('/uefa-rankings')
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) return;
-                    const currentTime = new Date().toLocaleTimeString();
+                    const labels = data.map(ranking => ranking.rowName);
+                    const points = data.map(ranking => ranking.points);
+                    uefaRankingsChart.data.labels = labels;
+                    uefaRankingsChart.data.datasets[0].data = points;
+                    uefaRankingsChart.update();
+                });
+        }
+
+        function updateUefaRankingsHistory() {
+            fetch('/uefa-rankings/history')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) return;
                     let html = '<ul>';
-                    let newDatasets = [];
-                    data.forEach(odds => {
-                        html += `<li>${odds.event}: ${odds.team} @ ${odds.odds}</li>`;
-                        let dataset = oddsChart.data.datasets.find(ds => ds.label === odds.team);
-                        if (!dataset) {
-                            dataset = { label: odds.team, data: [], borderColor: '#' + Math.floor(Math.random()*16777215).toString(16), tension: 0.1 };
-                            oddsChart.data.datasets.push(dataset);
-                        }
-                        dataset.data.push(odds.odds);
-                        if (dataset.data.length > 20) dataset.data.shift();
+                    data.forEach(ranking => {
+                        html += `<li>${ranking.timestamp}: ${ranking.position}. ${ranking.team_name} - ${ranking.points} points</li>`;
                     });
                     html += '</ul>';
-                    document.getElementById('odds-details').innerHTML = html;
-                    oddsChart.data.labels.push(currentTime);
-                    if (oddsChart.data.labels.length > 20) oddsChart.data.labels.shift();
-                    oddsChart.update();
+                    document.getElementById('uefa-rankings-history').innerHTML = html;
                 });
         }
 
         updateMetrics();
-        updateOdds();
+        updateUefaRankings();
+        updateUefaRankingsHistory();
         setInterval(updateMetrics, 5000);
-        setInterval(updateOdds, 60000);
+        setInterval(updateUefaRankings, 60000);
+        setInterval(updateUefaRankingsHistory, 86400000); // 24 hours in milliseconds
     </script>
 </body>
 </html>
