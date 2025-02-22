@@ -35,6 +35,12 @@
             text-align: right;
             margin-top: 20px;
         }
+        #yearSelect {
+            margin-left: 10px;
+            padding: 5px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
     </style>
 </head>
 <body>
@@ -47,18 +53,23 @@
         </div>
 
         <div class="metric-card">
-            <div class="metric-title">Running Threads</div>
-            <div id="threads-details"></div>
+            <div class="metric-title">Battery Level</div>
+            <div id="battery-details"></div>
         </div>
 
         <div class="metric-card">
-            <div class="metric-title">Top 6 UEFA Club Rankings</div>
-            <canvas id="uefaRankingsChart"></canvas>
+            <div class="metric-title">Live UEFA Club Rankings 2025</div>
+            <canvas id="liveRankingsChart"></canvas>
         </div>
 
         <div class="metric-card">
-            <div class="metric-title">UEFA Club Rankings History</div>
-            <div id="uefa-rankings-history"></div>
+            <div class="metric-title">
+                Historical UEFA Rankings
+                <select id="yearSelect" onchange="updateHistoricalRankings()">
+                    <option value="">Select Year</option>
+                </select>
+            </div>
+            <canvas id="historicalRankingsChart"></canvas>
         </div>
 
         <div class="timestamp" id="last-update"></div>
@@ -66,15 +77,32 @@
 
     <script>
         const ramCtx = document.getElementById('ramChart').getContext('2d');
-        const uefaRankingsCtx = document.getElementById('uefaRankingsChart').getContext('2d');
+        const liveCtx = document.getElementById('liveRankingsChart').getContext('2d');
+        const historicalCtx = document.getElementById('historicalRankingsChart').getContext('2d');
 
         const ramChart = new Chart(ramCtx, {
             type: 'line',
-            data: { labels: [], datasets: [{ label: 'RAM Usage (%)', data: [], borderColor: 'rgb(75, 192, 192)', tension: 0.1 }] },
-            options: { responsive: true, scales: { x: { title: { display: true, text: 'Time' } }, y: { title: { display: true, text: 'Usage (%)' }, min: 0, max: 100 } } }
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'RAM Usage (%)',
+                    data: [],
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            }
         });
 
-        const uefaRankingsChart = new Chart(uefaRankingsCtx, {
+        const liveRankingsChart = new Chart(liveCtx, {
             type: 'bar',
             data: {
                 labels: [],
@@ -89,8 +117,37 @@
             options: {
                 responsive: true,
                 scales: {
-                    x: { title: { display: true, text: 'Team' } },
-                    y: { title: { display: true, text: 'Points' }, beginAtZero: true }
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        const historicalRankingsChart = new Chart(historicalCtx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Points',
+                    data: [],
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: false
+                    }
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'UEFA Club Rankings'
+                    }
                 }
             }
         });
@@ -99,50 +156,73 @@
             fetch('/metrics')
                 .then(response => response.json())
                 .then(data => {
-                    if (data.error) return;
                     const currentTime = new Date().toLocaleTimeString();
                     ramChart.data.labels.push(currentTime);
                     ramChart.data.datasets[0].data.push(data.ram.usage_percent);
-                    if (ramChart.data.labels.length > 20) { ramChart.data.labels.shift(); ramChart.data.datasets[0].data.shift(); }
+                    if (ramChart.data.labels.length > 20) {
+                        ramChart.data.labels.shift();
+                        ramChart.data.datasets[0].data.shift();
+                    }
                     ramChart.update();
-                    document.getElementById('threads-details').innerHTML = `<p>Running Threads: ${data.threads}</p>`;
-                    document.getElementById('last-update').textContent = `Last Updated: ${new Date().toLocaleString()}`;
+                    document.getElementById('battery-details').innerHTML = 
+                        `<p>Battery Level: ${data.battery.percent}%</p>`;
+                    document.getElementById('last-update').textContent = 
+                        `Last Updated: ${new Date().toLocaleString()}`;
                 });
         }
 
-        function updateUefaRankings() {
+        function updateLiveRankings() {
             fetch('/uefa-rankings')
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) return;
                     const labels = data.map(ranking => ranking.rowName);
                     const points = data.map(ranking => ranking.points);
-                    uefaRankingsChart.data.labels = labels;
-                    uefaRankingsChart.data.datasets[0].data = points;
-                    uefaRankingsChart.update();
+                    liveRankingsChart.data.labels = labels;
+                    liveRankingsChart.data.datasets[0].data = points;
+                    liveRankingsChart.update();
                 });
         }
 
-        function updateUefaRankingsHistory() {
-            fetch('/uefa-rankings/history')
+        function populateYearDropdown() {
+            fetch('/years')
+                .then(response => response.json())
+                .then(years => {
+                    const yearSelect = document.getElementById('yearSelect');
+                    years.forEach(year => {
+                        const option = document.createElement('option');
+                        option.value = year;
+                        option.textContent = year;
+                        yearSelect.appendChild(option);
+                    });
+                    if (years.length > 0) {
+                        yearSelect.value = years[0];
+                        updateHistoricalRankings();
+                    }
+                });
+        }
+
+        function updateHistoricalRankings() {
+            const year = document.getElementById('yearSelect').value;
+            if (!year) return;
+
+            fetch(`/historical-rankings/${year}`)
                 .then(response => response.json())
                 .then(data => {
-                    if (data.error) return;
-                    let html = '<ul>';
-                    data.forEach(ranking => {
-                        html += `<li>${ranking.timestamp}: ${ranking.position}. ${ranking.team_name} - ${ranking.points} points</li>`;
-                    });
-                    html += '</ul>';
-                    document.getElementById('uefa-rankings-history').innerHTML = html;
+                    const labels = data.map(item => item.club);
+                    const points = data.map(item => item.points);
+                    historicalRankingsChart.data.labels = labels;
+                    historicalRankingsChart.data.datasets[0].data = points;
+                    historicalRankingsChart.options.plugins.title.text = `UEFA Club Rankings ${year}`;
+                    historicalRankingsChart.update();
                 });
         }
 
         updateMetrics();
-        updateUefaRankings();
-        updateUefaRankingsHistory();
+        updateLiveRankings();
+        populateYearDropdown();
         setInterval(updateMetrics, 5000);
-        setInterval(updateUefaRankings, 60000);
-        setInterval(updateUefaRankingsHistory, 86400000); // 24 hours in milliseconds
+        setInterval(updateLiveRankings, 60000);
     </script>
 </body>
 </html>
