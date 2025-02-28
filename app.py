@@ -1,234 +1,221 @@
 from flask import Flask, jsonify, render_template
+from abc import ABC, abstractmethod
 import psutil
 import threading
 import requests
 import sqlite3
 import time
 import csv
-from dotenv import load_dotenv
-import os
-
-# Load environment variables from .env file
-load_dotenv()
+from config import Config
 
 app = Flask(__name__)
+config = Config()
 
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
-RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
-UEFA_RANKINGS_URL = "https://allsportsapi2.p.rapidapi.com/api/rankings/uefa/clubs"
-DATABASE = os.getenv("DATABASE")
-def init_db():
-    """Initialize the database and create the tables if they don't exist."""
-    try:
-        conn = sqlite3.connect(DATABASE)
-        cursor = conn.cursor()
-        
-        # Keep existing table for live API data
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS uefa_rankings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                club TEXT,
-                points REAL,
-                year INTEGER
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS system_metrics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ram_usage REAL,
-                battery_level REAL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-    finally:
-        if conn:
-            conn.close()
+# Abstract Collector Interface
+class CollectorInterface(ABC):
+    @abstractmethod
+    def collect(self):
+        pass
 
-def save_uefa_rankings(rankings):
-    """Save UEFA rankings to the database."""
-    conn = None
-    try:
-        conn = sqlite3.connect(DATABASE, timeout=20)
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM uefa_rankings')  # Clear existing data
-        for ranking in rankings:
-            cursor.execute('''
-                INSERT INTO uefa_rankings (club, points)
-                VALUES (?, ?)
-            ''', (ranking['rowName'], ranking['points']))
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            conn.close()
-
-def get_system_metrics():
-    """Fetch system metrics."""
-    ram_usage = psutil.virtual_memory().percent
-    battery = psutil.sensors_battery()
-    battery_percent = battery.percent if battery else 0
-    return {
-        "ram": {"usage_percent": ram_usage},
-        "battery": {"percent": battery_percent}
-    }
-
-def get_uefa_rankings():
-    """Fetch UEFA club rankings."""
-    try:
-        headers = {
-            "x-rapidapi-key": RAPIDAPI_KEY,
-            "x-rapidapi-host": RAPIDAPI_HOST
+# PC Metrics Collector
+class PCCollector(CollectorInterface):
+    def collect(self):
+        ram_usage = psutil.virtual_memory().percent
+        battery = psutil.sensors_battery()
+        battery_percent = battery.percent if battery else 0
+        return {
+            "device_id": "device_1",
+            "metrics": {
+                "ram_usage": ram_usage,
+                "battery_level": battery_percent
+            }
         }
-        response = requests.get(UEFA_RANKINGS_URL, headers=headers)
-        data = response.json()
-        rankings = data.get('rankings', [])[:6]  # Return only the top 6 rankings
-        return rankings
-    except Exception as e:
-        print("Error fetching UEFA rankings:", str(e))
-        return {"error": str(e)}
 
-def fetch_and_save_uefa_rankings_periodically():
-    """Fetch and save UEFA rankings to the database every 3 days."""
-    while True:
-        rankings = get_uefa_rankings()
-        if 'error' not in rankings:
-            save_uefa_rankings(rankings)
-        time.sleep(3 * 24 * 60 * 60)  # Sleep for 3 days
+# Third Party Collector (UEFA Rankings)
+class UEFACollector(CollectorInterface):
+    def __init__(self):
+        self.api_key = config.get("api.rapidapi.key")
+        self.api_host = config.get("api.rapidapi.host")
+        self.api_url = config.get("api.uefa_rankings_url")
 
-def save_metrics_to_db(ram_usage, battery_level):
-    """Save system metrics to the database."""
+    def collect(self):
+        try:
+            headers = {
+                "x-rapidapi-key": self.api_key,
+                "x-rapidapi-host": self.api_host
+            }
+            response = requests.get(self.api_url, headers=headers)
+            data = response.json()
+            return {
+                "device_id": "device_2",
+                "metrics": {
+                    "rankings": data.get('rankings', [])[:6]
+                }
+            }
+        except Exception as e:
+            print(f"UEFA API Error: {e}")
+            return None
+
+# Uploader Queue
+class UploaderQueue:
+    def __init__(self):
+        self.queue = []
+        self._lock = threading.Lock()
+
+    def add(self, data):
+        with self._lock:
+            self.queue.append(data)
+
+    def get_all(self):
+        with self._lock:
+            data = self.queue.copy()
+            self.queue.clear()
+            return data
+
+# Aggregator API
+class MetricsAggregator:
+    def __init__(self, database):
+        self.database = database
+        self.init_db()
+
+    def init_db(self):
+        """Initialize the database with legacy tables."""
+        conn = None
+        try:
+            conn = sqlite3.connect(self.database)
+            cursor = conn.cursor()
+            
+            # Create legacy tables
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS uefa_rankings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    club TEXT,
+                    points REAL,
+                    year INTEGER
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS uefa_historical_rankings (
+                    club_id INTEGER PRIMARY KEY,
+                    club_name TEXT,
+                    points REAL,
+                    year INTEGER
+                )
+            ''')
+            
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database initialization error: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def save_metrics(self, data):
+        conn = None
+        try:
+            conn = sqlite3.connect(self.database)
+            cursor = conn.cursor()
+            
+            device_id = data['device_id']
+            metrics = data['metrics']
+            
+            # Create device-specific table if not exists
+            columns = [f"{key} REAL" for key in metrics.keys()]
+            table_name = f"metrics_{device_id}"
+            
+            cursor.execute(f'''
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    {', '.join(columns)}
+                )
+            ''')
+            
+            # Insert metrics
+            columns = list(metrics.keys())
+            values = [metrics[col] for col in columns]
+            placeholders = ','.join(['?' for _ in values])
+            
+            cursor.execute(f'''
+                INSERT INTO {table_name} ({','.join(columns)})
+                VALUES ({placeholders})
+            ''', values)
+            
+            conn.commit()
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            if conn:
+                conn.rollback()
+        finally:
+            if conn:
+                conn.close()
+
+# Collector Agent
+class CollectorAgent:
+    def __init__(self):
+        self.collectors = []
+        self.uploader_queue = UploaderQueue()
+        self.aggregator = MetricsAggregator(config.get("database.path"))
+
+    def add_collector(self, collector):
+        self.collectors.append(collector)
+
+    def collect_and_upload(self):
+        while True:
+            for collector in self.collectors:
+                data = collector.collect()
+                if data:
+                    self.uploader_queue.add(data)
+            
+            # Process queue
+            metrics = self.uploader_queue.get_all()
+            for metric in metrics:
+                self.aggregator.save_metrics(metric)
+            
+            time.sleep(300)  # 5 minutes interval
+
+# Routes
+@app.route('/metrics/<device_id>')
+def get_device_metrics(device_id):
     conn = None
     try:
-        conn = sqlite3.connect(DATABASE)
+        conn = sqlite3.connect(config.get("database.path"))
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO system_metrics (ram_usage, battery_level)
-            VALUES (?, ?)
-        ''', (ram_usage, battery_level))
-        conn.commit()
+        table_name = f"metrics_{device_id}"
+        cursor.execute(f"SELECT * FROM {table_name} ORDER BY timestamp DESC LIMIT 1")
+        row = cursor.fetchone()
+        if row:
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [col[1] for col in cursor.fetchall()]
+            return jsonify(dict(zip(columns, row)))
+        return jsonify({"error": "No data found"})
     except sqlite3.Error as e:
-        print(f"Error saving metrics: {e}")
-        if conn:
-            conn.rollback()
+        return jsonify({"error": str(e)})
     finally:
         if conn:
             conn.close()
-
-def metrics_logger():
-    """Log system metrics to database every 5 minutes."""
-    while True:
-        try:
-            ram = psutil.virtual_memory().percent
-            battery = psutil.sensors_battery()
-            battery_level = battery.percent if battery else 0
-            save_metrics_to_db(ram, battery_level)
-            print(f"Metrics saved: RAM {ram}%, Battery {battery_level}%")
-        except Exception as e:
-            print(f"Error logging metrics: {e}")
-        time.sleep(300)  # Wait 5 minutes
 
 @app.route('/metrics')
 def metrics():
-    """Endpoint to fetch system metrics."""
+    """Legacy endpoint to fetch system metrics."""
     return jsonify(get_system_metrics())
 
 @app.route('/uefa-rankings')
 def uefa_rankings():
-    """Endpoint to fetch UEFA club rankings."""
-    return jsonify(get_uefa_rankings())
-
-@app.route('/historical-rankings')
-def historical_rankings():
-    """Endpoint to fetch historical UEFA club rankings."""
+    """Legacy endpoint to fetch UEFA club rankings."""
     conn = None
     try:
-        conn = sqlite3.connect(DATABASE, timeout=20)  # Add timeout parameter
+        conn = sqlite3.connect(config.get("database.path"))
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT club_id, club_name, points, year 
-            FROM uefa_historical_rankings 
-            ORDER BY year DESC, points DESC
-        ''')
-        rankings = cursor.fetchall()
-        
-        formatted_rankings = [
-            {
-                'club_id': rank[0],
-                'club_name': rank[1],
-                'points': rank[2],
-                'year': rank[3]
-            } for rank in rankings
-        ]
-        
-        return jsonify(formatted_rankings)
+        cursor.execute('SELECT club, points FROM uefa_rankings ORDER BY points DESC')
+        rankings = [{'rowName': row[0], 'points': row[1]} for row in cursor.fetchall()]
+        return jsonify(rankings)
     except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return jsonify({"error": "Database error occurred"}), 500
+        return jsonify({"error": str(e)})
     finally:
         if conn:
             conn.close()
-
-@app.route('/')
-def index():
-    """Render the main dashboard page."""
-    return render_template('index.html')
-
-def insert_historical_data():
-    """Insert historical UEFA rankings data from CSV file."""
-    conn = None
-    try:
-        conn = sqlite3.connect(DATABASE)
-        cursor = conn.cursor()
-        
-        # Clear existing data
-        cursor.execute('DELETE FROM uefa_historical_rankings')
-        
-        # Read data from CSV file
-        with open('uefa_rankings.csv', 'r', encoding='utf-8') as file:
-            csv_reader = csv.DictReader(file)
-            data = [
-                (
-                    index + 1,  # Generate club_id automatically
-                    row['club'],
-                    float(row['points']),
-                    int(row['year'])
-                )
-                for index, row in enumerate(csv_reader)
-            ]
-        
-        cursor.executemany('''
-            INSERT INTO uefa_historical_rankings (club_id, club_name, points, year)
-            VALUES (?, ?, ?, ?)
-        ''', data)
-        
-        conn.commit()
-        print("Historical data inserted successfully!")
-    except Exception as e:
-        print(f"Error: {e}")
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            conn.close()
-
-@app.route('/years')
-def get_years():
-    """Get available years for dropdown."""
-    try:
-        with open('uefa_rankings.csv', 'r', encoding='utf-8') as file:
-            csv_reader = csv.DictReader(file)
-            years = sorted(set(row['Year'] for row in csv_reader), reverse=True)  # Note the capital 'Y' in 'Year'
-            print(f"Available years: {years}")
-            return jsonify(years)
-    except Exception as e:
-        print(f"Error reading years: {e}")
-        return jsonify([])
 
 @app.route('/historical-rankings/<year>')
 def historical_rankings_by_year(year):
@@ -249,8 +236,40 @@ def historical_rankings_by_year(year):
         print(f"Error: {e}")
         return jsonify([])
 
+@app.route('/years')
+def get_years():
+    """Get available years for dropdown."""
+    try:
+        with open('uefa_rankings.csv', 'r', encoding='utf-8') as file:
+            csv_reader = csv.DictReader(file)
+            years = sorted(set(row['Year'] for row in csv_reader), reverse=True)
+            return jsonify(years)
+    except Exception as e:
+        print(f"Error reading years: {e}")
+        return jsonify([])
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+# Helper function for legacy support
+def get_system_metrics():
+    """Legacy function to fetch system metrics."""
+    ram_usage = psutil.virtual_memory().percent
+    battery = psutil.sensors_battery()
+    battery_percent = battery.percent if battery else 0
+    return {
+        "ram": {"usage_percent": ram_usage},
+        "battery": {"percent": battery_percent}
+    }
+
 if __name__ == "__main__":
-    init_db()
-    threading.Thread(target=fetch_and_save_uefa_rankings_periodically, daemon=True).start()
-    threading.Thread(target=metrics_logger, daemon=True).start()
+    # Initialize collector agent
+    agent = CollectorAgent()
+    agent.add_collector(PCCollector())
+    agent.add_collector(UEFACollector())
+    
+    # Start collection thread
+    threading.Thread(target=agent.collect_and_upload, daemon=True).start()
+    
     app.run(debug=True)

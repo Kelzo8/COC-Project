@@ -1,0 +1,32 @@
+{
+  "api": {
+    "rapidapi": {
+      "key": "",
+      "host": "",
+      "uefa_rankings_url": "https://allsportsapi2.p.rapidapi.com/api/rankings/uefa/clubs"
+    }
+  },
+  "database": {
+    "path": "",
+    "tables": {
+      "uefa_rankings": {
+        "name": "uefa_rankings",
+        "columns": ["id", "club", "points", "year"]
+      },
+      "uefa_historical_rankings": {
+        "name": "uefa_historical_rankings",
+        "columns": ["club_id", "club_name", "points", "year"]
+      }
+    }
+  },
+  "collectors": {
+    "pc_metrics": {
+      "device_id": "device_1",
+      "interval": 300
+    },
+    "uefa_rankings": {
+      "device_id": "device_2",
+      "max_rankings": 6
+    }
+  }
+} 
