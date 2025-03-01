@@ -41,6 +41,11 @@
             border-radius: 4px;
             border: 1px solid #ddd;
         }
+        .command-item {
+            padding: 10px;
+            margin: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
     </style>
 </head>
 <body>
@@ -70,6 +75,18 @@
                 </select>
             </div>
             <canvas id="historicalRankingsChart"></canvas>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-title">Device Commands</div>
+            <div>
+                <select id="commandType">
+                    <option value="restart">Restart</option>
+                    <option value="status">Status Check</option>
+                </select>
+                <button onclick="sendCommand()">Send Command</button>
+            </div>
+            <div id="commandHistory"></div>
         </div>
 
         <div class="timestamp" id="last-update"></div>
@@ -218,11 +235,45 @@
                 });
         }
 
+        function sendCommand() {
+            const command = document.getElementById('commandType').value;
+            fetch('/device/command/device_1', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ command: command })
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert('Command sent successfully');
+                updateCommandHistory();
+            })
+            .catch(error => alert('Error sending command'));
+        }
+
+        function updateCommandHistory() {
+            fetch('/device/commands/device_1')
+                .then(response => response.json())
+                .then(commands => {
+                    const historyHtml = commands.map(cmd => `
+                        <div class="command-item">
+                            <strong>${cmd.command}</strong> - ${cmd.status}
+                            <br>
+                            Created: ${new Date(cmd.created_at).toLocaleString()}
+                            ${cmd.response ? `<br>Response: ${cmd.response}` : ''}
+                        </div>
+                    `).join('');
+                    document.getElementById('commandHistory').innerHTML = historyHtml;
+                });
+        }
+
         updateMetrics();
         updateLiveRankings();
         populateYearDropdown();
         setInterval(updateMetrics, 5000);
         setInterval(updateLiveRankings, 60000);
+        setInterval(updateCommandHistory, 5000);
     </script>
 </body>
 </html>
