@@ -2,6 +2,8 @@ import json
 import os
 from typing import Dict, Any
 
+DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///instance/uefa_rankings.db')
+
 class Config:
     _instance = None
     _config: Dict[str, Any] = {}
@@ -33,4 +35,4 @@ class Config:
                 value = value.get(key, default)
             else:
                 return default
-        return value 
+        return value
