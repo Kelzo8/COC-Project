@@ -60,7 +60,9 @@ class UEFACollector(CollectorInterface):
     def __init__(self):
         self.api_key = config.get("api.rapidapi.key")
         self.api_host = config.get("api.rapidapi.host")
-        self.api_url = config.get("api.uefa_rankings_url")
+        self.api_url = config.get("api.rapidapi.url")
+        self.last_update = 0
+        self.update_interval = 43200  # 12 hours in seconds
 
     def get_device_id(self) -> str:
         return "device_2"
@@ -69,6 +71,16 @@ class UEFACollector(CollectorInterface):
         return "uefa_rankings"
 
     def collect(self) -> MetricData:
+        """
+        Collect UEFA rankings data from the API every 12 hours.
+        Returns None if it's not time to update yet.
+        """
+        current_time = time.time()
+        
+        # Check if it's time to update (12 hours passed)
+        if current_time - self.last_update < self.update_interval:
+            return None
+
         try:
             headers = {
                 "x-rapidapi-key": self.api_key,
@@ -76,6 +88,11 @@ class UEFACollector(CollectorInterface):
             }
             response = requests.get(self.api_url, headers=headers)
             data = response.json()
+            
+            # Update the last update timestamp
+            self.last_update = current_time
+            
+            # Return top 6 rankings
             return MetricData(
                 self.get_device_id(),
                 self.get_metric_type(),
@@ -111,41 +128,37 @@ class MetricsAggregator:
         self.init_db()
 
     def init_db(self):
-        """Initialize the database with tables."""
+        """
+        Initialize the SQLite database with required tables.
+        - uefa_rankings: Stores current UEFA club rankings
+        - device_commands: Stores device commands and their execution status
+        """
         conn = None
         try:
             conn = sqlite3.connect(self.database)
             cursor = conn.cursor()
             
-            # Create legacy tables
+            # Create UEFA rankings table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS uefa_rankings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    club TEXT,
-                    points REAL,
-                    year INTEGER
+                    club TEXT,               -- Name of the club
+                    points REAL,             -- Current UEFA points
+                    year INTEGER,            -- Year of the ranking
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP  -- Last update timestamp
                 )
             ''')
             
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS uefa_historical_rankings (
-                    club_id INTEGER PRIMARY KEY,
-                    club_name TEXT,
-                    points REAL,
-                    year INTEGER
-                )
-            ''')
-            
-            # Add new device_commands table
+            # Create device commands table for handling device operations
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS device_commands (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    device_id TEXT NOT NULL,
-                    command TEXT NOT NULL,
-                    status TEXT DEFAULT 'pending',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    executed_at DATETIME,
-                    response TEXT
+                    device_id TEXT NOT NULL,         -- Identifier of the target device
+                    command TEXT NOT NULL,           -- Command to execute
+                    status TEXT DEFAULT 'pending',   -- Command status (pending/completed/failed)
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,  -- When command was created
+                    executed_at DATETIME,            -- When command was executed
+                    response TEXT                    -- Command execution response
                 )
             ''')
             
@@ -177,22 +190,31 @@ class MetricsAggregator:
         self.table_cache.add(table_name)
 
     def save_metrics(self, metric_data: MetricData):
+        """
+        Save metrics to the database.
+        For UEFA rankings, updates the uefa_rankings table with new data.
+        """
+        if not metric_data or not metric_data.values:
+            return
+
         conn = None
         try:
             conn = sqlite3.connect(self.database)
-            table_name = self.get_table_name(metric_data.device_id, metric_data.metric_type)
-            self.ensure_table_exists(conn, table_name, metric_data.values)
-            
             cursor = conn.cursor()
-            columns = list(metric_data.values.keys())
-            values = [metric_data.values[col] for col in columns]
-            placeholders = ','.join(['?' for _ in values])
-            
-            cursor.execute(f'''
-                INSERT INTO {table_name} ({','.join(columns)})
-                VALUES ({placeholders})
-            ''', values)
-            
+
+            # Handle UEFA rankings differently
+            if metric_data.metric_type == "uefa_rankings":
+                # Clear existing rankings
+                cursor.execute("DELETE FROM uefa_rankings")
+                
+                # Insert new rankings
+                current_year = time.strftime("%Y")
+                for ranking in metric_data.values["rankings"]:
+                    cursor.execute('''
+                        INSERT INTO uefa_rankings (club, points, year)
+                        VALUES (?, ?, ?)
+                    ''', (ranking['team'], ranking['points'], current_year))
+
             conn.commit()
         except sqlite3.Error as e:
             print(f"Database error: {e}")
