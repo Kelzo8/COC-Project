@@ -43,15 +43,25 @@ class PCCollector(CollectorInterface):
 
     def collect(self) -> MetricData:
         ram_usage = psutil.virtual_memory().percent
-        battery = psutil.sensors_battery()
-        battery_percent = battery.percent if battery else 0
+        # Handle cloud environment where battery isn't available
+        battery_info = {"percent": 0, "status": "Cloud Server - No Battery"}
         
+        try:
+            battery = psutil.sensors_battery()
+            if battery:
+                battery_info = {
+                    "percent": battery.percent,
+                    "status": "Connected" if battery.power_plugged else "Discharging"
+                }
+        except Exception:
+            pass
+            
         return MetricData(
             self.get_device_id(),
             self.get_metric_type(),
             {
                 "ram_usage": ram_usage,
-                "battery_level": battery_percent
+                "battery_info": battery_info
             }
         )
 
