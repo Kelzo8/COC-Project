@@ -43,15 +43,14 @@ class PCCollector(CollectorInterface):
 
     def collect(self) -> MetricData:
         ram_usage = psutil.virtual_memory().percent
-        battery = psutil.sensors_battery()
-        battery_percent = battery.percent if battery else 0
+        thread_count = threading.active_count()  # Get number of active threads
         
         return MetricData(
             self.get_device_id(),
             self.get_metric_type(),
             {
                 "ram_usage": ram_usage,
-                "battery_level": battery_percent
+                "thread_count": thread_count  # Replace battery with thread count
             }
         )
 
@@ -459,11 +458,10 @@ def get_device_commands(device_id):
 def get_system_metrics():
     """Legacy function to fetch system metrics."""
     ram_usage = psutil.virtual_memory().percent
-    battery = psutil.sensors_battery()
-    battery_percent = battery.percent if battery else 0
+    thread_count = threading.active_count()
     return {
         "ram": {"usage_percent": ram_usage},
-        "battery": {"percent": battery_percent}
+        "threads": {"count": thread_count}  # Replace battery with threads
     }
 
 if __name__ == "__main__":

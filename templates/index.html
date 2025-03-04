@@ -58,11 +58,6 @@
         </div>
 
         <div class="metric-card">
-            <div class="metric-title">Battery Level</div>
-            <div id="battery-details"></div>
-        </div>
-
-        <div class="metric-card">
             <div class="metric-title">Live UEFA Club Rankings 2025</div>
             <canvas id="liveRankingsChart"></canvas>
         </div>
@@ -87,6 +82,11 @@
                 <button onclick="sendCommand()">Send Command</button>
             </div>
             <div id="commandHistory"></div>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-title">Active Threads</div>
+            <div id="thread-details"></div>
         </div>
 
         <div class="timestamp" id="last-update"></div>
@@ -181,8 +181,8 @@
                         ramChart.data.datasets[0].data.shift();
                     }
                     ramChart.update();
-                    document.getElementById('battery-details').innerHTML = 
-                        `<p>Battery Level: ${data.battery.percent}%</p>`;
+                    document.getElementById('thread-details').innerHTML = 
+                        `<p>Active Threads: ${data.threads.count}</p>`;
                     document.getElementById('last-update').textContent = 
                         `Last Updated: ${new Date().toLocaleString()}`;
                 });
