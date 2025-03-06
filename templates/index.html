@@ -46,6 +46,38 @@
             margin: 5px 0;
             border-bottom: 1px solid #eee;
         }
+        .crypto-container {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+        }
+        .crypto-price {
+            text-align: center;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            width: 45%;
+        }
+        .crypto-price h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        .price {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .change {
+            margin-top: 5px;
+            font-size: 16px;
+        }
+        .positive-change {
+            color: #27ae60;
+        }
+        .negative-change {
+            color: #c0392b;
+        }
     </style>
 </head>
 <body>
@@ -87,6 +119,23 @@
         <div class="metric-card">
             <div class="metric-title">Active Threads</div>
             <div id="thread-details"></div>
+        </div>
+
+        <div class="metric-card">
+            <div class="metric-title">Cryptocurrency Prices</div>
+            <div class="crypto-container">
+                <div class="crypto-price" id="bitcoin-price">
+                    <h3>Bitcoin (BTC)</h3>
+                    <div class="price">Loading...</div>
+                    <div class="change">--</div>
+                </div>
+                <div class="crypto-price" id="ethereum-price">
+                    <h3>Ethereum (ETH)</h3>
+                    <div class="price">Loading...</div>
+                    <div class="change">--</div>
+                </div>
+            </div>
+            <canvas id="cryptoChart"></canvas>
         </div>
 
         <div class="timestamp" id="last-update"></div>
@@ -170,34 +219,86 @@
         });
 
         function updateMetrics() {
-            fetch('/metrics')
-                .then(response => response.json())
+            console.log('Fetching system metrics...');
+            fetch('/metrics/device_1/system_metrics')
+                .then(response => {
+                    console.log('Raw response:', response);
+                    return response.json();
+                })
                 .then(data => {
-                    const currentTime = new Date().toLocaleTimeString();
+                    console.log('Received metrics data:', data);
+                    
+                    if (data.error) {
+                        console.error('Error in metrics data:', data.error);
+                        return;
+                    }
+                    
+                    // Extract the actual metrics from the data structure
+                    const metrics = data.data;
+                    console.log('Parsed metrics:', metrics);
+
+                    const currentTime = new Date(metrics.timestamp).toLocaleTimeString();
+                    
+                    // Update RAM chart
                     ramChart.data.labels.push(currentTime);
-                    ramChart.data.datasets[0].data.push(data.ram.usage_percent);
+                    ramChart.data.datasets[0].data.push(metrics.ram_usage);
+                    
+                    // Keep only last 20 data points
                     if (ramChart.data.labels.length > 20) {
                         ramChart.data.labels.shift();
                         ramChart.data.datasets[0].data.shift();
                     }
+                    
+                    console.log('Updating RAM chart with:', metrics.ram_usage);
                     ramChart.update();
+
+                    // Update thread count display
                     document.getElementById('thread-details').innerHTML = 
-                        `<p>Active Threads: ${data.threads.count}</p>`;
+                        `<p>Active Threads: ${metrics.thread_count}</p>`;
+                    
+                    // Update last update timestamp
                     document.getElementById('last-update').textContent = 
-                        `Last Updated: ${new Date().toLocaleString()}`;
+                        `Last Updated: ${new Date(metrics.timestamp).toLocaleString()}`;
+                })
+                .catch(error => {
+                    console.error('Error fetching metrics:', error);
                 });
         }
 
         function updateLiveRankings() {
-            fetch('/uefa-rankings')
-                .then(response => response.json())
+            console.log('Fetching UEFA rankings...');
+            fetch('/metrics/device_2/uefa_rankings')
+                .then(response => {
+                    console.log('Raw UEFA response:', response);
+                    return response.json();
+                })
                 .then(data => {
-                    if (data.error) return;
-                    const labels = data.map(ranking => ranking.rowName);
-                    const points = data.map(ranking => ranking.points);
+                    console.log('Received UEFA data:', data);
+                    
+                    if (data.error) {
+                        console.error('Error in UEFA data:', data.error);
+                        return;
+                    }
+
+                    const rankings = data.data.rankings;
+                    console.log('Parsed rankings:', rankings);
+
+                    if (!rankings || !Array.isArray(rankings)) {
+                        console.error('Invalid rankings data format');
+                        return;
+                    }
+
+                    const labels = rankings.map(ranking => ranking.team);
+                    const points = rankings.map(ranking => ranking.points);
+                    
+                    console.log('Updating rankings chart with:', { labels, points });
+                    
                     liveRankingsChart.data.labels = labels;
                     liveRankingsChart.data.datasets[0].data = points;
                     liveRankingsChart.update();
+                })
+                .catch(error => {
+                    console.error('Error fetching UEFA rankings:', error);
                 });
         }
 
@@ -268,12 +369,117 @@
                 });
         }
 
+        // Initialize crypto chart
+        const cryptoCtx = document.getElementById('cryptoChart').getContext('2d');
+        const cryptoChart = new Chart(cryptoCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Bitcoin (USD)',
+                        data: [],
+                        borderColor: '#f1c40f',
+                        tension: 0.1,
+                        fill: false
+                    },
+                    {
+                        label: 'Ethereum (USD)',
+                        data: [],
+                        borderColor: '#2980b9',
+                        tension: 0.1,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        ticks: {
+                            callback: function(value) {
+                                return '$' + value.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': $' + context.parsed.y.toLocaleString();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        function updateCryptoPrices() {
+            console.log('Fetching crypto prices...');
+            fetch('/metrics/device_3/crypto_prices')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Received crypto data:', data);
+                    
+                    if (data.error) {
+                        console.error('Error fetching crypto prices:', data.error);
+                        return;
+                    }
+
+                    // Extract the actual metrics from the data structure
+                    const metrics = data.data;
+                    console.log('Parsed crypto metrics:', metrics);
+
+                    const currentTime = new Date(metrics.timestamp).toLocaleTimeString();
+
+                    // Update Bitcoin price display
+                    const btcPrice = document.querySelector('#bitcoin-price .price');
+                    const btcChange = document.querySelector('#bitcoin-price .change');
+                    if (btcPrice && metrics.bitcoin_usd) {
+                        btcPrice.textContent = `$${Number(metrics.bitcoin_usd).toLocaleString()}`;
+                        console.log('Updated BTC price display:', btcPrice.textContent);
+                    }
+
+                    // Update Ethereum price display
+                    const ethPrice = document.querySelector('#ethereum-price .price');
+                    const ethChange = document.querySelector('#ethereum-price .change');
+                    if (ethPrice && metrics.ethereum_usd) {
+                        ethPrice.textContent = `$${Number(metrics.ethereum_usd).toLocaleString()}`;
+                        console.log('Updated ETH price display:', ethPrice.textContent);
+                    }
+
+                    // Update chart
+                    cryptoChart.data.labels.push(currentTime);
+                    cryptoChart.data.datasets[0].data.push(Number(metrics.bitcoin_usd));
+                    cryptoChart.data.datasets[1].data.push(Number(metrics.ethereum_usd));
+
+                    // Keep only last 20 data points
+                    if (cryptoChart.data.labels.length > 20) {
+                        cryptoChart.data.labels.shift();
+                        cryptoChart.data.datasets.forEach(dataset => dataset.data.shift());
+                    }
+
+                    cryptoChart.update();
+                    console.log('Chart updated with new data points');
+                })
+                .catch(error => {
+                    console.error('Error fetching crypto prices:', error);
+                });
+        }
+
         updateMetrics();
         updateLiveRankings();
         populateYearDropdown();
-        setInterval(updateMetrics, 5000);
-        setInterval(updateLiveRankings, 60000);
+        setInterval(updateMetrics, 2000);  // Every 2 seconds
+        setInterval(updateLiveRankings, 5000);  // Every 5 seconds
         setInterval(updateCommandHistory, 5000);
+        setInterval(updateCryptoPrices, 5000);  // Update every 5 seconds
     </script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Dict, Any
+from dotenv import load_dotenv
 
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///instance/uefa_rankings.db')
 
@@ -13,6 +14,26 @@ class Config:
             cls._instance = super(Config, cls).__new__(cls)
             cls._instance._load_config()
         return cls._instance
+
+    def __init__(self):
+        load_dotenv()  # Load environment variables from .env file
+        
+        # Required configurations
+        self.required_configs = {
+            "api.rapidapi.key": os.getenv('RAPIDAPI_KEY'),
+            "database.path": "instance/metrics.db"
+        }
+        
+        # Validate required configurations
+        missing_configs = [
+            key for key, value in self.required_configs.items() 
+            if not value
+        ]
+        
+        if missing_configs:
+            raise ValueError(
+                f"Missing required configurations: {', '.join(missing_configs)}"
+            )
 
     def _load_config(self):
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
@@ -27,12 +48,5 @@ class Config:
         if os.getenv("DATABASE"):
             self._config["database"]["path"] = os.getenv("DATABASE")
 
-    def get(self, key_path: str, default=None) -> Any:
-        keys = key_path.split('.')
-        value = self._config
-        for key in keys:
-            if isinstance(value, dict):
-                value = value.get(key, default)
-            else:
-                return default
-        return value
+    def get(self, key):
+        return self.required_configs.get(key)
