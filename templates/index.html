@@ -78,30 +78,70 @@
         .negative-change {
             color: #c0392b;
         }
+        .history-controls {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+        }
+        .history-controls select, .history-controls button {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .history-controls button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .history-controls button:hover {
+            background: #0056b3;
+        }
+        #historyStats {
+            margin-top: 20px;
+            display: flex;
+            justify-content: space-around;
+        }
+        .stat-box {
+            text-align: center;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+        }
+        .stat-value {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+        }
     </style>
 </head>
 <body>
     <div class="dashboard">
         <h1>System Metrics & UEFA Club Rankings Dashboard</h1>
         
+        <div class="history-controls">
+            <select id="historyMetricSelect">
+                <option value="system_metrics">System Metrics</option>
+                <option value="crypto_prices">Crypto Prices</option>
+            </select>
+            <select id="historyTimeRange">
+                <option value="24h">Last 24 Hours</option>
+                <option value="7d">Last 7 Days</option>
+                <option value="30d">Last 30 Days</option>
+            </select>
+            <button onclick="loadHistoricalData()">View History</button>
+        </div>
+
         <div class="metric-card">
             <div class="metric-title">RAM Usage</div>
             <canvas id="ramChart"></canvas>
-        </div>
-
-        <div class="metric-card">
-            <div class="metric-title">Live UEFA Club Rankings 2025</div>
-            <canvas id="liveRankingsChart"></canvas>
-        </div>
-
-        <div class="metric-card">
-            <div class="metric-title">
-                Historical UEFA Rankings
-                <select id="yearSelect" onchange="updateHistoricalRankings()">
-                    <option value="">Select Year</option>
-                </select>
-            </div>
-            <canvas id="historicalRankingsChart"></canvas>
         </div>
 
         <div class="metric-card">
@@ -138,13 +178,17 @@
             <canvas id="cryptoChart"></canvas>
         </div>
 
+        <div class="metric-card" id="historyCard" style="display: none;">
+            <div class="metric-title">Historical Data</div>
+            <canvas id="historyChart"></canvas>
+            <div id="historyStats"></div>
+        </div>
+
         <div class="timestamp" id="last-update"></div>
     </div>
 
     <script>
         const ramCtx = document.getElementById('ramChart').getContext('2d');
-        const liveCtx = document.getElementById('liveRankingsChart').getContext('2d');
-        const historicalCtx = document.getElementById('historicalRankingsChart').getContext('2d');
 
         const ramChart = new Chart(ramCtx, {
             type: 'line',
@@ -163,56 +207,6 @@
                     y: {
                         beginAtZero: true,
                         max: 100
-                    }
-                }
-            }
-        });
-
-        const liveRankingsChart = new Chart(liveCtx, {
-            type: 'bar',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Points',
-                    data: [],
-                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-
-        const historicalRankingsChart = new Chart(historicalCtx, {
-            type: 'bar',
-            data: {
-                labels: [],
-                datasets: [{
-                    label: 'Points',
-                    data: [],
-                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                    borderColor: 'rgba(54, 162, 235, 1)',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: false
-                    }
-                },
-                plugins: {
-                    title: {
-                        display: true,
-                        text: 'UEFA Club Rankings'
                     }
                 }
             }
@@ -262,77 +256,6 @@
                 })
                 .catch(error => {
                     console.error('Error fetching metrics:', error);
-                });
-        }
-
-        function updateLiveRankings() {
-            console.log('Fetching UEFA rankings...');
-            fetch('/metrics/device_2/uefa_rankings')
-                .then(response => {
-                    console.log('Raw UEFA response:', response);
-                    return response.json();
-                })
-                .then(data => {
-                    console.log('Received UEFA data:', data);
-                    
-                    if (data.error) {
-                        console.error('Error in UEFA data:', data.error);
-                        return;
-                    }
-
-                    const rankings = data.data.rankings;
-                    console.log('Parsed rankings:', rankings);
-
-                    if (!rankings || !Array.isArray(rankings)) {
-                        console.error('Invalid rankings data format');
-                        return;
-                    }
-
-                    const labels = rankings.map(ranking => ranking.team);
-                    const points = rankings.map(ranking => ranking.points);
-                    
-                    console.log('Updating rankings chart with:', { labels, points });
-                    
-                    liveRankingsChart.data.labels = labels;
-                    liveRankingsChart.data.datasets[0].data = points;
-                    liveRankingsChart.update();
-                })
-                .catch(error => {
-                    console.error('Error fetching UEFA rankings:', error);
-                });
-        }
-
-        function populateYearDropdown() {
-            fetch('/years')
-                .then(response => response.json())
-                .then(years => {
-                    const yearSelect = document.getElementById('yearSelect');
-                    years.forEach(year => {
-                        const option = document.createElement('option');
-                        option.value = year;
-                        option.textContent = year;
-                        yearSelect.appendChild(option);
-                    });
-                    if (years.length > 0) {
-                        yearSelect.value = years[0];
-                        updateHistoricalRankings();
-                    }
-                });
-        }
-
-        function updateHistoricalRankings() {
-            const year = document.getElementById('yearSelect').value;
-            if (!year) return;
-
-            fetch(`/historical-rankings/${year}`)
-                .then(response => response.json())
-                .then(data => {
-                    const labels = data.map(item => item.club);
-                    const points = data.map(item => item.points);
-                    historicalRankingsChart.data.labels = labels;
-                    historicalRankingsChart.data.datasets[0].data = points;
-                    historicalRankingsChart.options.plugins.title.text = `UEFA Club Rankings ${year}`;
-                    historicalRankingsChart.update();
                 });
         }
 
@@ -473,11 +396,179 @@
                 });
         }
 
+        let historyChart = null;
+
+        function loadHistoricalData() {
+            const metricType = document.getElementById('historyMetricSelect').value;
+            const timeRange = document.getElementById('historyTimeRange').value;
+            const deviceId = getDeviceIdForMetric(metricType);
+
+            console.log(`Loading historical data for ${metricType} over ${timeRange}`);
+
+            fetch(`/metrics/history/${deviceId}/${metricType}?range=${timeRange}`)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Historical data received:', data);
+                    displayHistoricalData(data);
+                })
+                .catch(error => console.error('Error loading historical data:', error));
+        }
+
+        function getDeviceIdForMetric(metricType) {
+            switch(metricType) {
+                case 'system_metrics': return 'device_1';
+                case 'crypto_prices': return 'device_3';
+                default: return 'device_1';
+            }
+        }
+
+        function displayHistoricalData(data) {
+            const historyCard = document.getElementById('historyCard');
+            historyCard.style.display = 'block';
+
+            // Destroy existing chart if it exists
+            if (historyChart) {
+                historyChart.destroy();
+            }
+
+            const ctx = document.getElementById('historyChart').getContext('2d');
+            const chartConfig = createChartConfig(data);
+            historyChart = new Chart(ctx, chartConfig);
+
+            // Display statistics
+            displayStatistics(data);
+        }
+
+        function createChartConfig(data) {
+            const labels = data.data.map(d => new Date(d.timestamp).toLocaleString());
+            const datasets = [];
+
+            switch(data.metric_type) {
+                case 'system_metrics':
+                    datasets.push(
+                        {
+                            label: 'RAM Usage (%)',
+                            data: data.data.map(d => d.ram_usage),
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Thread Count',
+                            data: data.data.map(d => d.thread_count),
+                            borderColor: 'rgb(153, 102, 255)',
+                            tension: 0.1
+                        }
+                    );
+                    break;
+
+                case 'crypto_prices':
+                    datasets.push(
+                        {
+                            label: 'Bitcoin (USD)',
+                            data: data.data.map(d => d.bitcoin_usd),
+                            borderColor: '#f1c40f',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Ethereum (USD)',
+                            data: data.data.map(d => d.ethereum_usd),
+                            borderColor: '#2980b9',
+                            tension: 0.1
+                        }
+                    );
+                    break;
+            }
+
+            return {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: false
+                        }
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `Historical ${data.metric_type.replace('_', ' ').toUpperCase()}`
+                        }
+                    }
+                }
+            };
+        }
+
+        function displayStatistics(data) {
+            const statsDiv = document.getElementById('historyStats');
+            let stats = [];
+
+            switch(data.metric_type) {
+                case 'system_metrics':
+                    stats = calculateSystemMetricsStats(data.data);
+                    break;
+                case 'crypto_prices':
+                    stats = calculateCryptoPricesStats(data.data);
+                    break;
+            }
+
+            statsDiv.innerHTML = stats.map(stat => `
+                <div class="stat-box">
+                    <div class="stat-label">${stat.label}</div>
+                    <div class="stat-value">${stat.value}</div>
+                </div>
+            `).join('');
+        }
+
+        function calculateSystemMetricsStats(data) {
+            const ramUsages = data.map(d => d.ram_usage);
+            const threadCounts = data.map(d => d.thread_count);
+
+            return [
+                {
+                    label: 'Avg RAM Usage',
+                    value: `${average(ramUsages).toFixed(1)}%`
+                },
+                {
+                    label: 'Max RAM Usage',
+                    value: `${Math.max(...ramUsages).toFixed(1)}%`
+                },
+                {
+                    label: 'Avg Threads',
+                    value: average(threadCounts).toFixed(0)
+                }
+            ];
+        }
+
+        function calculateCryptoPricesStats(data) {
+            const btcPrices = data.map(d => d.bitcoin_usd);
+            const ethPrices = data.map(d => d.ethereum_usd);
+
+            return [
+                {
+                    label: 'BTC High',
+                    value: `$${Math.max(...btcPrices).toLocaleString()}`
+                },
+                {
+                    label: 'BTC Low',
+                    value: `$${Math.min(...btcPrices).toLocaleString()}`
+                },
+                {
+                    label: 'ETH High',
+                    value: `$${Math.max(...ethPrices).toLocaleString()}`
+                }
+            ];
+        }
+
+        function average(arr) {
+            return arr.reduce((a, b) => a + b, 0) / arr.length;
+        }
+
         updateMetrics();
-        updateLiveRankings();
-        populateYearDropdown();
         setInterval(updateMetrics, 2000);  // Every 2 seconds
-        setInterval(updateLiveRankings, 5000);  // Every 5 seconds
         setInterval(updateCommandHistory, 5000);
         setInterval(updateCryptoPrices, 5000);  // Update every 5 seconds
     </script>

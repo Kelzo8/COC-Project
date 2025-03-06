@@ -2,7 +2,6 @@ import os
 from src.server.app import create_app
 from src.services.collector_agent import CollectorAgent
 from src.services.pc_collector import PCCollector
-from src.services.uefa_collector import UEFACollector
 from src.services.crypto_collector import CryptoCollector
 import threading
 
@@ -15,7 +14,6 @@ def start_collector():
     
     agent = CollectorAgent(server_url)
     agent.add_collector(PCCollector())
-    agent.add_collector(UEFACollector())
     agent.add_collector(CryptoCollector())
     
     # Start collection thread

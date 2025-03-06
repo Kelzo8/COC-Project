@@ -3,7 +3,7 @@ import sqlite3
 from flask import jsonify, render_template, request
 from config import Config
 from .database import Database, UEFARanking
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import logging
 import json
@@ -232,6 +232,67 @@ class MetricsAPI:
                     
                 return jsonify(data)
             except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @app.route('/metrics/history/<device_id>/<metric_type>')
+        def get_metrics_history(device_id, metric_type):
+            """Get historical metrics data with time range filtering"""
+            try:
+                # Get time range from query parameters (default to last 24 hours)
+                time_range = request.args.get('range', '24h')
+                
+                # Calculate time range
+                end_time = datetime.utcnow()
+                if time_range == '24h':
+                    start_time = end_time - timedelta(days=1)
+                elif time_range == '7d':
+                    start_time = end_time - timedelta(days=7)
+                elif time_range == '30d':
+                    start_time = end_time - timedelta(days=30)
+                else:
+                    start_time = end_time - timedelta(days=1)  # Default to 24h
+
+                # Get table and query data
+                table_name = f"metrics_{device_id}_{metric_type}"
+                MetricModel = self.db.get_metric_table(table_name)
+                
+                if not MetricModel:
+                    return jsonify({"error": "No metrics found"}), 404
+                
+                # Query data within time range
+                metrics = (self.session.query(MetricModel)
+                          .filter(MetricModel.timestamp.between(start_time, end_time))
+                          .order_by(MetricModel.timestamp.asc())
+                          .all())
+                
+                # Format response based on metric type
+                if metric_type == 'system_metrics':
+                    data = [{
+                        'timestamp': m.timestamp.isoformat(),
+                        'ram_usage': m.ram_usage,
+                        'thread_count': m.thread_count
+                    } for m in metrics]
+                elif metric_type == 'crypto_prices':
+                    data = [{
+                        'timestamp': m.timestamp.isoformat(),
+                        'bitcoin_usd': m.bitcoin_usd,
+                        'ethereum_usd': m.ethereum_usd
+                    } for m in metrics]
+                elif metric_type == 'uefa_rankings':
+                    data = [{
+                        'timestamp': m.timestamp.isoformat(),
+                        'rankings': json.loads(m.rankings)
+                    } for m in metrics]
+                
+                return jsonify({
+                    'device_id': device_id,
+                    'metric_type': metric_type,
+                    'time_range': time_range,
+                    'data': data
+                })
+
+            except Exception as e:
+                logger.error(f"Error fetching historical metrics: {e}", exc_info=True)
                 return jsonify({"error": str(e)}), 500
 
     def _validate_metrics_data(self, data):
