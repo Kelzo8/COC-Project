@@ -1,20 +1,14 @@
 services:
   - type: web
-    name: your-app-name
+    name: metrics-api
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn src.server.app:app
     envVars:
-      - key: ENVIRONMENT
-        value: production
-      - key: PYTHON_VERSION
-        value: 3.9.0
-      - key: RAPIDAPI_KEY
-        sync: false
       - key: DATABASE_URL
-        fromDatabase:
-          name: your-db-name
-          property: connectionString
+        value: postgresql://kelzodb_user:b9WCxmKsbZSTq0EYqGJ6aM0wU7Nl4ege@dpg-cv5cv77noe9s73egtus0-a.oregon-postgres.render.com/kelzodb
+      - key: PORT
+        value: 10000
 
 databases:
   - name: your-db-name
