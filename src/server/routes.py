@@ -2,11 +2,12 @@ import csv
 import sqlite3
 from flask import jsonify, render_template, request
 from config import Config
-from .database import Database, UEFARanking
+from .database import Database, UEFARanking, DeviceCommand
 from datetime import datetime, timedelta
 import time
 import logging
 import json
+from sqlalchemy import desc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,11 +42,7 @@ class MetricsAPI:
                 return jsonify({"error": "Invalid metrics data format"}), 400
 
             try:
-                if data['metric_type'] == "uefa_rankings":
-                    self._handle_uefa_rankings(data['values'])
-                else:
-                    self._handle_generic_metrics(data)
-                
+                self._handle_generic_metrics(data)
                 logger.info("Metrics saved successfully")
                 return jsonify({"message": "Metrics saved successfully"}), 200
             except Exception as e:
@@ -60,15 +57,16 @@ class MetricsAPI:
                 MetricModel = self.db.get_metric_table(table_name)
                 
                 if not MetricModel:
-                    logger.warning(f"No metric table found for {table_name}")
-                    return jsonify({"error": "No metrics found"}), 404
-                
+                    # Create table if it doesn't exist
+                    metrics = {"value": "FLOAT"} if metric_type == "system_metrics" else {"price": "FLOAT"}
+                    MetricModel = self.db.create_metric_table(table_name, metrics)
+                    logger.info(f"Created new metrics table: {table_name}")
+                    
                 latest_metric = (self.session.query(MetricModel)
-                               .order_by(MetricModel.timestamp.desc())
+                               .order_by(desc(MetricModel.timestamp))
                                .first())
                 
                 if latest_metric:
-                    # Convert SQLAlchemy model to dict
                     metric_dict = {}
                     for column in MetricModel.__table__.columns:
                         if column.name != 'id':
@@ -82,11 +80,9 @@ class MetricsAPI:
                         "metric_type": metric_type,
                         "data": metric_dict
                     }
-                    logger.info(f"Returning metrics data: {response_data}")
                     return jsonify(response_data)
                 
-                logger.warning("No data found in table")
-                return jsonify({"error": "No data found"}), 404
+                return jsonify({"message": "No data found yet"}), 200
             except Exception as e:
                 logger.error(f"Error fetching metrics: {e}", exc_info=True)
                 return jsonify({"error": str(e)}), 500
@@ -148,57 +144,44 @@ class MetricsAPI:
             if not command:
                 return jsonify({"error": "Command is required"}), 400
             
-            conn = None
             try:
-                config = Config()
-                conn = sqlite3.connect(config.get("database.path"))
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO device_commands (device_id, command)
-                    VALUES (?, ?)
-                ''', (device_id, command))
-                conn.commit()
+                new_command = DeviceCommand(
+                    device_id=device_id,
+                    command=command,
+                    status='pending'
+                )
+                self.session.add(new_command)
+                self.session.commit()
+                
                 return jsonify({
                     "message": "Command sent successfully",
-                    "command_id": cursor.lastrowid
+                    "command_id": new_command.id
                 })
-            except sqlite3.Error as e:
+            except Exception as e:
+                self.session.rollback()
+                logger.error(f"Error sending command: {e}")
                 return jsonify({"error": str(e)}), 500
-            finally:
-                if conn:
-                    conn.close()
 
         @app.route('/device/commands/<device_id>')
         def get_device_commands(device_id):
             """Get command history for a device."""
-            conn = None
             try:
-                config = Config()
-                conn = sqlite3.connect(config.get("database.path"))
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT id, command, status, created_at, executed_at, response
-                    FROM device_commands
-                    WHERE device_id = ?
-                    ORDER BY created_at DESC
-                ''', (device_id,))
+                commands = (self.session.query(DeviceCommand)
+                          .filter(DeviceCommand.device_id == device_id)
+                          .order_by(desc(DeviceCommand.created_at))
+                          .all())
                 
-                commands = []
-                for row in cursor.fetchall():
-                    commands.append({
-                        "id": row[0],
-                        "command": row[1],
-                        "status": row[2],
-                        "created_at": row[3],
-                        "executed_at": row[4],
-                        "response": row[5]
-                    })
-                return jsonify(commands)
-            except sqlite3.Error as e:
+                return jsonify([{
+                    "id": cmd.id,
+                    "command": cmd.command,
+                    "status": cmd.status,
+                    "created_at": cmd.created_at.isoformat() + 'Z',
+                    "executed_at": cmd.executed_at.isoformat() + 'Z' if cmd.executed_at else None,
+                    "response": cmd.response
+                } for cmd in commands])
+            except Exception as e:
+                logger.error(f"Error fetching commands: {e}")
                 return jsonify({"error": str(e)}), 500
-            finally:
-                if conn:
-                    conn.close()
 
         @app.route('/debug/metrics')
         def debug_metrics():
@@ -300,35 +283,23 @@ class MetricsAPI:
         required_fields = ['device_id', 'metric_type', 'values']
         return all(field in data for field in required_fields)
 
-    def _handle_uefa_rankings(self, rankings_data):
-        """Handle UEFA rankings data"""
-        # Clear existing rankings
-        self.session.query(UEFARanking).delete()
-        
-        # Insert new rankings
-        current_year = int(time.strftime("%Y"))
-        for ranking in rankings_data["rankings"]:
-            new_ranking = UEFARanking(
-                club=ranking['team'],
-                points=ranking['points'],
-                year=current_year
-            )
-            self.session.add(new_ranking)
-        
-        self.session.commit()
-
     def _handle_generic_metrics(self, data):
         """Handle generic metrics data"""
         table_name = f"metrics_{data['device_id']}_{data['metric_type']}"
-        MetricModel = self.db.create_metric_table(table_name, data['values'])
+        MetricModel = self.db.get_metric_table(table_name)
         
-        # Create new metric record with all values
-        new_metric = MetricModel(**data['values'])
+        if not MetricModel:
+            MetricModel = self.db.create_metric_table(table_name, 
+                {k: "FLOAT" if isinstance(v, (int, float)) else "TEXT" 
+                 for k, v in data['values'].items()})
         
-        # Set timestamp if provided
-        if 'timestamp' in data:
-            new_metric.timestamp = datetime.fromisoformat(data['timestamp'].replace('Z', '+00:00'))
+        # Create new metric record
+        metric_data = {
+            'timestamp': datetime.utcnow(),
+            **data['values']
+        }
         
+        new_metric = MetricModel(**metric_data)
         self.session.add(new_metric)
         self.session.commit()
         logger.info(f"Saved generic metrics to {table_name}: {data['values']}")
